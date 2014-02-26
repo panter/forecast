@@ -5,12 +5,12 @@ var AUTH_TOKEN = ""
 var API_HOST_URL = "http://controllr-staging.panter.biz/"
 
 // Configuration end. Don't change anything below here.
-
 // url to load the revenue forecast data
 var finalResourceURL = API_HOST_URL + "api/revenue_forecast.json?user_token=" + AUTH_TOKEN;
 
 // map column order to var names
 var projectNameColumn = 1;
+var projectLeaderColumn = 2;
 var startDateColumn = 3;
 var endDateColumn = 4;
 var revenueColumn = 5;
@@ -109,16 +109,6 @@ function renderProjectRows(projects, baseURL){
     var projectNameRange = sheet.getRange(projectNameCell)
     projectNameRange.setFormula(projectNameFormula);
 
-    // format start date
-    var startDateFormula = '=hyperlink("'+baseURL+editPath+'"; "'+startDate+'")';
-    var startDateRange = sheet.getRange(startDateCell)
-    startDateRange.setFormula(startDateFormula);
-
-    // format end date
-    var endDateFormula = '=hyperlink("'+baseURL+editPath+'"; "'+endDate+'")';
-    var endDateRange = sheet.getRange(endDateCell)
-    endDateRange.setFormula(endDateFormula);
-
     // format revenue
     var revenueFormula = '=hyperlink("'+baseURL+accountingPath+'"; "'+revenue+'")';
     var revenueRange = sheet.getRange(totalRevenueCell)
@@ -166,11 +156,64 @@ function loadForecastJSON(url) {
   return data;
 }
 
+function pushBackToControllr(){
+  var confirm = Browser.msgBox('Send spreadsheet data to controllr', 'Do you really want to update all projects in the controllr with the data from this spreadsheet?', Browser.Buttons.YES_NO);
+  if(confirm == "no") return;
+
+  var sheet = SpreadsheetApp.getActiveSheet();
+  var numRows = sheet.getLastRow() - 3 - 1; // - totalRow + empty rows before + header row
+  var firstRow = 2;
+  var range = sheet.getRange(firstRow, 1, numRows, isActiveColumn);
+  var rows = range.getValues();
+  var jsonString = JSON.stringify({rows: rows})
+
+  // TODO: confirm dialog
+  var request =  UrlFetchApp.fetch(finalResourceURL, { method : "PUT", payload: jsonString });
+  var data = JSON.parse(request.getContentText());
+
+  rows.forEach(function(row, idx){
+    var rowIdx = idx + 2; // 1 based + 1 header row offset
+    var rowMatch = data.invalid.filter(function(r){ return r.project_name == row[0]})
+    var errors = rowMatch.length > 0 ? rowMatch[0].errors : false;
+    var rowRange = sheet.getRange("$A$"+(rowIdx)+":$H$"+(rowIdx))
+    rowRange.setBackground("#ffffff");
+
+    if(errors){
+      if(errors.leader){
+        formatError(rowIdx, projectLeaderColumn, sheet);
+      }
+
+      if(errors.start){
+        formatError(rowIdx, startDateColumn, sheet);
+      }
+
+      if(errors.end){
+        formatError(rowIdx, endDateColumn, sheet);
+      }
+
+      if(errors.probability){
+        formatError(rowIdx, probabilityColumn, sheet)
+      }
+
+      if(errors.project_state){
+        formatError(rowIdx, stateColumn, sheet);
+      }
+    }
+  });
+}
+
+function formatError(rowIdx, col, sheet){
+  sheet.getRange(rowIdx, col).setBackground("#ff0000")
+}
+
 function onOpen() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet();
   var entries = [{
     name : "Aktuellen Revenue Forecast laden",
     functionName : "loadCurrentForecast"
+  },{
+    name : "Push back to Controllr",
+    functionName : "pushBackToControllr"
   }];
   sheet.addMenu("Controllr", entries);
 };
