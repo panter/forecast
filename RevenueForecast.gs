@@ -1,48 +1,84 @@
 // Configuration:
 // enter a valid authentication token here, user must have controllr api access.
 // enter the root url to your controllr server
-var AUTH_TOKEN = ""
-var API_HOST_URL = "http://controllr-staging.panter.biz/"
+var AUTH_TOKEN = ''
+var API_HOST_URL = 'http://controllr-staging.panter.biz/'
 
 // Configuration end. Don't change anything below here.
 // url to load the revenue forecast data
-var finalResourceURL = API_HOST_URL + "api/revenue_forecast.json?user_token=" + AUTH_TOKEN;
+var finalResourceURL      = API_HOST_URL + "api/revenue_forecast.json?user_token=" + AUTH_TOKEN;
+var projectStates         = ['lead', 'offered', 'won', 'running', 'closing', 'permanent'];
+
+var leadSheetName         = 'Leads';
+var leadProjectStates     = ['lead', 'offered'];
+
+var runningSheetName      = 'Running';
+var runningProjectStates  = ['won', 'running', 'closing', 'permanent'];
 
 // map column order to var names
-var projectNameColumn = 1;
-var projectLeaderColumn = 2;
-var startDateColumn = 3;
-var endDateColumn = 4;
-var revenueColumn = 5;
-var probabilityColumn = 6;
-var stateColumn = 7;
-var isActiveColumn = 8;
-var firstMonthColumn = 9; // first column with a month
+var projectNameColumn     = 1;
+var projectLeaderColumn   = 2;
+var startDateColumn       = 3;
+var endDateColumn         = 4;
+var revenueColumn         = 5;
+var probabilityColumn     = 6;
+var stateColumn           = 7;
+var isActiveColumn        = 8;
+var firstMonthColumn      = 9; // first column with a month
 
 // column mapping for A1 notation
 var columnMapping = "0ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
 // input validation with dropdowns for "state" and "active" columns
 var yesNoValidation = SpreadsheetApp.newDataValidation().requireValueInList(['Yes', 'No'], true).build();
-var stateValidation = SpreadsheetApp.newDataValidation().requireValueInList(['lead', 'offered', 'won', 'running', 'closing', 'permanent'], true).build();
+var stateValidation = SpreadsheetApp.newDataValidation().requireValueInList(projectStates, true).build();
 
-function loadCurrentForecast() {
-  var sheet = SpreadsheetApp.getActiveSheet();
-  var rows = sheet.getDataRange();
-  var numRows = rows.getNumRows();
-  var values = rows.getValues();
+function loadForecastForProjectsWithStatesIntoSheet(sheetName, states){
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = spreadsheet.getSheetByName(sheetName);
 
-  var data = loadForecastJSON(finalResourceURL);
-  var rows = data.rows;
+  if(!sheet){
+    var confirm = Browser.msgBox('Neues Sheet "'+sheetName+'"', 'Das Sheet mit dem Namen "'+sheetName+'" gibt es noch nicht. Sollen wir es erstellen?', Browser.Buttons.YES_NO);
+    if(confirm === 'yes'){
+      sheet = spreadsheet.insertSheet(sheetName)
+    }
+  }
 
-  renderProjectRows(rows, data.base_url);
-  formatHeaderRow();
-  renderTotalRow(rows.length);
-  applyCellValidations(rows.length-1);
-};
+  var rows    = sheet.getDataRange(),
+      numRows = rows.getNumRows(),
+      values  = rows.getValues(),
+      data    = loadForecastJSON(finalResourceURL);
 
-function renderProjectRows(projects, baseURL){
-  var sheet = SpreadsheetApp.getActiveSheet();
+  var projectRows = [],
+      indexOfStateInProjectArray = 6,
+      isHeaderRow = 0;
+
+  data.rows.forEach(function(row, idx){
+    // always include header row
+    if(idx == isHeaderRow || states.indexOf(row[indexOfStateInProjectArray]) != -1){
+      projectRows.push(row);
+    }
+  });
+
+  renderProjectRows(sheet, projectRows, data.base_url);
+  renderHeaderRow(sheet);
+  renderTotalRow(sheet, projectRows.length);
+  applyCellValidations(sheet, projectRows.length-1);
+
+  return sheet;
+}
+
+function loadLeadsForecast(){
+  var sheet = loadForecastForProjectsWithStatesIntoSheet(leadSheetName, leadProjectStates);
+  SpreadsheetApp.getActiveSpreadsheet().setActiveSheet(sheet);
+}
+
+function loadRunningProjectsForecast(){
+  var sheet = loadForecastForProjectsWithStatesIntoSheet(runningSheetName, runningProjectStates);
+  SpreadsheetApp.getActiveSpreadsheet().setActiveSheet(sheet);
+}
+
+function renderProjectRows(sheet, projects, baseURL){
   sheet.clear();
 
   if(!projects){
@@ -117,9 +153,7 @@ function renderProjectRows(projects, baseURL){
   })
 }
 
-function renderTotalRow(numberOfProjects){
-  var sheet = SpreadsheetApp.getActiveSheet();
-
+function renderTotalRow(sheet, numberOfProjects){
   var rowOffset = 2; // empty rows between projects and total
   var rowNumber = numberOfProjects + 1 + rowOffset;
 
@@ -134,20 +168,17 @@ function renderTotalRow(numberOfProjects){
   }
 }
 
-function applyCellValidations(numProjects){
-  var sheet = SpreadsheetApp.getActiveSheet();
+function renderHeaderRow(sheet){
+  var range = sheet.getRange("A1:Z1");
+  range.setFontWeight("bold");
+}
 
+function applyCellValidations(sheet, numProjects){
   var stateRange = sheet.getRange(2, stateColumn, numProjects);
   stateRange.setDataValidation(stateValidation);
 
   var isActiveRange = sheet.getRange(2, isActiveColumn, numProjects);
   isActiveRange.setDataValidation(yesNoValidation);
-}
-
-function formatHeaderRow(){
-  var sheet = SpreadsheetApp.getActive();
-  var range = sheet.getRange("A1:Z1");
-  range.setFontWeight("bold");
 }
 
 function loadForecastJSON(url) {
@@ -157,25 +188,35 @@ function loadForecastJSON(url) {
 }
 
 function pushBackToControllr(){
-  var confirm = Browser.msgBox('Send spreadsheet data to controllr', 'Do you really want to update all projects in the controllr with the data from this spreadsheet?', Browser.Buttons.YES_NO);
+  var confirm = Browser.msgBox('Spreadsheet Daten im Controllr speichern?', 'Möchtest du wirklich alle Daten im Controllr mit den Daten aus den Spreadsheets "'+leadSheetName+'" und "'+runningSheetName+'" überschreiben?', Browser.Buttons.YES_NO);
   if(confirm == "no") return;
 
-  var sheet = SpreadsheetApp.getActiveSheet();
-  var numRows = sheet.getLastRow() - 3 - 1; // - totalRow + empty rows before + header row
-  var firstRow = 2;
-  var range = sheet.getRange(firstRow, 1, numRows, isActiveColumn);
-  var rows = range.getValues();
-  var jsonString = JSON.stringify({rows: rows})
+  var leadSheet, runningSheet;
 
-  // TODO: confirm dialog
-  var request =  UrlFetchApp.fetch(finalResourceURL, { method : "PUT", payload: jsonString });
-  var data = JSON.parse(request.getContentText());
+  if(leadSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(leadSheetName)){
+    saveBackDataFromSheet(leadSheet);
+  }
+
+  if(runningSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(runningSheetName)){
+    saveBackDataFromSheet(runningSheet);
+  }
+}
+
+function saveBackDataFromSheet(sheet){
+  var numRows     = sheet.getLastRow() - 3 - 1; // - totalRow + empty rows before + header row
+  var firstRow    = 2;
+  var range       = sheet.getRange(firstRow, 1, numRows, isActiveColumn);
+  var rows        = range.getValues();
+  var jsonString  = JSON.stringify({rows: rows});
+  var request     = UrlFetchApp.fetch(finalResourceURL, { method : "PUT", payload: jsonString });
+  var data        = JSON.parse(request.getContentText());
 
   rows.forEach(function(row, idx){
     var rowIdx = idx + 2; // 1 based + 1 header row offset
-    var rowMatch = data.invalid.filter(function(r){ return r.project_name == row[0]})
+    var rowMatch = data.invalid.filter(function(r){ return r.project_name == row[0]});
     var errors = rowMatch.length > 0 ? rowMatch[0].errors : false;
-    var rowRange = sheet.getRange("$A$"+(rowIdx)+":$H$"+(rowIdx))
+
+    var rowRange = sheet.getRange("$A$"+(rowIdx)+":$H$"+(rowIdx));
     rowRange.setBackground("#ffffff");
 
     if(errors){
@@ -192,7 +233,7 @@ function pushBackToControllr(){
       }
 
       if(errors.probability){
-        formatError(rowIdx, probabilityColumn, sheet)
+        formatError(rowIdx, probabilityColumn, sheet);
       }
 
       if(errors.project_state){
@@ -209,8 +250,11 @@ function formatError(rowIdx, col, sheet){
 function onOpen() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet();
   var entries = [{
-    name : "Aktuellen Revenue Forecast laden",
-    functionName : "loadCurrentForecast"
+    name : "Forecast für Leads laden",
+    functionName : "loadLeadsForecast"
+  },{
+    name: "Forecast für laufende Projekte laden",
+    functionName: "loadRunningProjectsForecast"
   },{
     name : "Push back to Controllr",
     functionName : "pushBackToControllr"
